@@ -77,6 +77,3 @@ If $Available Battery < Required Energy$, the system:
 *Note: This project is a functional prototype. In a production environment, real-time traffic telematics and high-resolution Digital Elevation Models (DEM) would be integrated.*
 
 ```
-
-### Next Step
-Since you mentioned being sleepy earlier, I've ensured this is the "final version" that matches all your latest edits. Would you like me to generate a **`requirements.txt`** file now so your friend has the complete package ready for her submission?

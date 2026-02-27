@@ -76,4 +76,3 @@ If $Available Battery < Required Energy$, the system:
 
 *Note: This project is a functional prototype. In a production environment, real-time traffic telematics and high-resolution Digital Elevation Models (DEM) would be integrated.*
 
-```

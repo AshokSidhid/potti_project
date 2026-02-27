@@ -1,4 +1,3 @@
-```markdown
 # AI-Based Electric Vehicle Route Optimization System
 
 ![Python Version](https://img.shields.io/badge/python-3.14t-blue)

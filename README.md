@@ -32,20 +32,18 @@ By integrating real-world topographical data (elevation), aerodynamic drag coeff
    ```bash
    git clone [https://github.com/AshokSidhid/potti_project.git](https://github.com/AshokSidhid/potti_project.git)
    cd potti_project
+   ```
 
-```
 
 2. **Install dependencies:**
-```bash
-pip install -r requirements.txt
-
-```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 3. **Run the application:**
-```bash
-streamlit run app.py
-
-```
+   ```bash
+   streamlit run app.py
+   ```
 
 ## 📊 Methodology
 

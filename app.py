@@ -2,12 +2,14 @@ import streamlit as st
 import osmnx as ox
 import networkx as nx
 import folium
-import os
 import numpy as np
 import requests
 from streamlit_folium import folium_static
+
+# Enable OSMnx local caching to prevent re-downloading the same city data
 ox.settings.use_cache = True
-# Import our upgraded custom modules
+
+# Import our custom modules
 from ml_model import train_energy_model, predict_energy_dynamic
 from routing import find_energy_route_astar, find_shortest_route
 
@@ -31,56 +33,50 @@ def analyze_route(graph, route_nodes):
         
     return total_dist_m / 1000.0, total_energy_wh
 
-def add_real_elevation(G):
-    """Fetches actual topographical elevation data, with a presentation failsafe."""
+@st.cache_data(show_spinner=False)
+def fast_geocode(query):
+    """Caches the GPS coordinates so we don't wait for the API twice."""
+    return ox.geocode(query)
+
+@st.cache_data(show_spinner=False)
+def get_map_data(center_coords, radius):
+    """Downloads the optimized map and adds elevation. Fully cache-safe (No UI elements inside)."""
+    # Use graph_from_point for maximum stability across OSMnx versions
+    G = ox.graph_from_point(center_coords, dist=radius, network_type="drive")
+    
     nodes = list(G.nodes(data=True))
     elevation_dict = {}
     
+    # PRESENTATION SAFEGUARD: Procedural hills for massive maps to avoid freezing
     if len(nodes) > 2000:
-        st.warning(f"⚡ Large map detected ({len(nodes)} nodes). Activating rapid procedural elevation...")
         for node_id, data in nodes:
             lat, lon = data['y'], data['x']
             elevation_dict[node_id] = 500 + (np.sin(lat * 100) * 30) + (np.cos(lon * 100) * 30)
+    else:
+        # Live OpenTopoData elevation (Hidden background fetch, no progress bar to freeze the cache)
+        batch_size = 100 
+        for i in range(0, len(nodes), batch_size):
+            batch = nodes[i:i+batch_size]
+            locations = "|".join([f"{data['y']},{data['x']}" for node_id, data in batch])
+            url = f"https://api.opentopodata.org/v1/srtm30m?locations={locations}"
             
-        nx.set_node_attributes(G, elevation_dict, 'elevation')
-        G = ox.elevation.add_edge_grades(G)
-        return G
-
-    batch_size = 100 
-    progress_text = "Fetching live topological data..."
-    my_bar = st.progress(0, text=progress_text)
-    
-    for i in range(0, len(nodes), batch_size):
-        batch = nodes[i:i+batch_size]
-        locations = "|".join([f"{data['y']},{data['x']}" for node_id, data in batch])
-        url = f"https://api.opentopodata.org/v1/srtm30m?locations={locations}"
-        
-        try:
-            response = requests.get(url, timeout=5)
-            if response.status_code == 200:
-                results = response.json().get('results', [])
-                for (node_id, _), res in zip(batch, results):
-                    elevation_dict[node_id] = res.get('elevation') or 500.0
-            else:
+            try:
+                response = requests.get(url, timeout=5)
+                if response.status_code == 200:
+                    results = response.json().get('results', [])
+                    for (node_id, _), res in zip(batch, results):
+                        elevation_dict[node_id] = res.get('elevation') or 500.0
+                else:
+                    for node_id, _ in batch:
+                        elevation_dict[node_id] = 500.0
+            except Exception:
                 for node_id, _ in batch:
                     elevation_dict[node_id] = 500.0
-        except Exception:
-            for node_id, _ in batch:
-                elevation_dict[node_id] = 500.0
-                
-        progress_percent = min(1.0, (i + batch_size) / len(nodes))
-        my_bar.progress(progress_percent, text=progress_text)
-        
-    my_bar.empty() 
+                    
     nx.set_node_attributes(G, elevation_dict, 'elevation')
     G = ox.elevation.add_edge_grades(G)
     return G
-@st.cache_data(show_spinner=False)
-def get_map_data(center_coords, radius):
-    """Downloads the map and adds elevation. Caches the result to avoid repeating work."""
-    G = ox.graph_from_point(center_coords, dist=radius, network_type="drive")
-    G = add_real_elevation(G)
-    return G
+
 # -------------------------------------------------
 # Page Configuration
 # -------------------------------------------------
@@ -94,9 +90,30 @@ st.markdown("---")
 # -------------------------------------------------
 col1, col2 = st.columns(2)
 
+# Pre-defined list of major Hyderabad locations for the prototype demo
+hyderabad_locations = [
+    "Charminar, Hyderabad, India",
+    "Gachibowli, Hyderabad, India",
+    "HITEC City, Hyderabad, India",
+    "Jubilee Hills, Hyderabad, India",
+    "Banjara Hills, Hyderabad, India",
+    "Secunderabad Station, Hyderabad, India",
+    "Rajiv Gandhi International Airport, Hyderabad, India",
+    "Golconda Fort, Hyderabad, India",
+    "Kukatpally, Hyderabad, India",
+    "Madhapur, Hyderabad, India",
+    "Miyapur, Hyderabad, India",
+    "L.B. Nagar, Hyderabad, India",
+    "Ameerpet, Hyderabad, India",
+    "Begumpet, Hyderabad, India",
+    "Uppal, Hyderabad, India",
+    "Dilsukhnagar, Hyderabad, India",
+    "Mehdipatnam, Hyderabad, India"
+]
+
 with col1:
-    source = st.text_input("Source Location", "Charminar, Hyderabad, India")
-    destination = st.text_input("Destination Location", "Gachibowli, Hyderabad, India")
+    source = st.selectbox("Source Location", options=hyderabad_locations, index=0)
+    destination = st.selectbox("Destination Location", options=hyderabad_locations, index=1)
 
 with col2:
     battery_percentage = st.slider("Battery Percentage (%)", 0, 100, 50)
@@ -108,34 +125,39 @@ st.markdown("---")
 # Route Calculation Engine
 # -------------------------------------------------
 if st.button("Compute Route"):
+    if source == destination:
+        st.warning("⚠️ Source and Destination are the same. Please select different locations.")
+        st.stop()
+
     st.info("Geocoding source and destination...")
     try:
-        orig = ox.geocode(source)
-        dest = ox.geocode(destination)
+        orig = fast_geocode(source)
+        dest = fast_geocode(destination)
     except Exception as e:
         st.error("Could not locate one of the addresses. Please be more specific.")
         st.stop()
 
+    # ---------------------------------------------------------
+    # TIGHT RADIUS OPTIMIZATION:
+    # ---------------------------------------------------------
     mid_lat = (orig[0] + dest[0]) / 2.0
     mid_lon = (orig[1] + dest[1]) / 2.0
     center_coords = (mid_lat, mid_lon)
 
     dist_m = ox.distance.great_circle(orig[0], orig[1], dest[0], dest[1])
-    radius = int((dist_m / 2) + 2500) 
+    # Tightly wrap the map with only a 1.5km padding for detours
+    radius = int((dist_m / 2) + 1500) 
 
-    if radius > 20000:
-        st.error("⚠️ Distance too large for a live demo! Please keep locations within ~35km of each other.")
-        st.stop()
-
-    st.info(f"Loading road network and elevation for a {radius/1000:.1f} km radius...")
-    # This will instantly load from cache if you've searched this area recently!
+    st.info(f"Loading optimized road network ({radius/1000:.1f} km radius) and elevation...")
+    # This calls our new bug-free cached function
     G = get_map_data(center_coords, radius)
 
     st.info("Initializing EV Physics model and Training Random Forest...")
+    # This will load instantly from RAM after the first run thanks to @st.cache_resource
     ev_coeffs = train_energy_model()
 
     # ==========================================================
-    # NEW BATCH PREDICTION LOGIC (Instantly scores all 85k edges)
+    # BATCH PREDICTION LOGIC (Instantly scores all edges)
     # ==========================================================
     st.info("Applying Machine Learning predictions to map edges...")
     edge_features = []
@@ -157,8 +179,10 @@ if st.button("Compute Route"):
     if edge_features:
         # Predict all edges in a fraction of a second
         predictions = ev_coeffs.predict(np.array(edge_features))
-        for i, (u, v, key) in enumerate(edge_refs):
-            G[u][v][key]['ml_energy_cost'] = float(predictions[i])
+        
+        # INSTANT C-LEVEL ASSIGNMENT
+        cost_dict = {ref: float(pred) for ref, pred in zip(edge_refs, predictions)}
+        nx.set_edge_attributes(G, cost_dict, 'ml_energy_cost')
     # ==========================================================
 
     st.info("Computing A* and Dijkstra paths...")
@@ -277,5 +301,6 @@ if st.button("Compute Route"):
             st.info("Routed to Simulated Offline Charger.")
 
     st.subheader("Interactive Route Visualization")
+    
     folium_static(m)
     st.success("Computation and Rendering completed successfully.")

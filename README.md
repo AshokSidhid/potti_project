@@ -42,7 +42,7 @@ To handle large cities like Hyderabad (80k+ nodes), the model predicts the energ
 * **Green Route:** Energy-efficient path (A*). Optimized by the ML model to maximize range.
 
 ## 📥 Setup
-1. Clone the repo: `git clone https://github.com/AshokSidhid/potti_project.git`
+1. Clone the repo: `git clone https://github.com/LekhanaGembali/potti_project.git`
 2. Install dependencies: `pip install -r requirements.txt`
 3. Run the app: `streamlit run app.py`
 
